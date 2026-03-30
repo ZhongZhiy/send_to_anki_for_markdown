@@ -35,6 +35,12 @@ anki-cli --file <path.md> --tags tag1,tag2 [--anki-url http://127.0.0.1:8765] [-
 
 ## Markdown 结构规则
 
+### 文件编码（中文）
+
+推荐使用 UTF-8 保存 Markdown（可带 BOM）。
+
+在 Windows 上如果你的笔记是 GBK/ANSI 或 UTF-16（部分编辑器默认），本工具会自动尝试识别并转换为 UTF-8（优先 UTF-8/UTF-16 BOM，其次 UTF-8，最后 GBK best-effort）。
+
 ### 牌组名
 
 文件中第一个一级标题 `# ...` 作为牌组名；没有则使用 `Default`。

@@ -23,6 +23,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "encoding_rs",
  "env_logger",
  "lazy_static",
  "log",

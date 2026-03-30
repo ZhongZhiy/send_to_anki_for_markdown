@@ -31,6 +31,74 @@ struct Args {
     print_json: bool,
 }
 
+fn looks_like_utf16_le(bytes: &[u8]) -> bool {
+    if bytes.len() < 4 {
+        return false;
+    }
+    let mut zero_odd = 0usize;
+    let mut checked = 0usize;
+    for (idx, b) in bytes.iter().take(2048).enumerate() {
+        if idx % 2 == 1 {
+            checked += 1;
+            if *b == 0 {
+                zero_odd += 1;
+            }
+        }
+    }
+    checked > 0 && (zero_odd * 100 / checked) >= 30
+}
+
+fn looks_like_utf16_be(bytes: &[u8]) -> bool {
+    if bytes.len() < 4 {
+        return false;
+    }
+    let mut zero_even = 0usize;
+    let mut checked = 0usize;
+    for (idx, b) in bytes.iter().take(2048).enumerate() {
+        if idx % 2 == 0 {
+            checked += 1;
+            if *b == 0 {
+                zero_even += 1;
+            }
+        }
+    }
+    checked > 0 && (zero_even * 100 / checked) >= 30
+}
+
+fn read_markdown_file(path: &PathBuf) -> anyhow::Result<String> {
+    let bytes = fs::read(path)?;
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        return Ok(String::from_utf8(bytes[3..].to_vec())?);
+    }
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        let (text, _, _) = encoding_rs::UTF_16LE.decode(&bytes[2..]);
+        return Ok(text.into_owned());
+    }
+    if bytes.starts_with(&[0xFE, 0xFF]) {
+        let (text, _, _) = encoding_rs::UTF_16BE.decode(&bytes[2..]);
+        return Ok(text.into_owned());
+    }
+
+    if let Ok(text) = String::from_utf8(bytes.clone()) {
+        return Ok(text);
+    }
+
+    if looks_like_utf16_le(&bytes) {
+        let (text, _, _) = encoding_rs::UTF_16LE.decode(&bytes);
+        return Ok(text.into_owned());
+    }
+    if looks_like_utf16_be(&bytes) {
+        let (text, _, _) = encoding_rs::UTF_16BE.decode(&bytes);
+        return Ok(text.into_owned());
+    }
+
+    let (text, _, had_errors) = encoding_rs::GBK.decode(&bytes);
+    if had_errors {
+        eprintln!("Warning: file encoding decode had errors; falling back to best-effort GBK decode: {:?}", path);
+    }
+    Ok(text.into_owned())
+}
+
 fn split_front_back(title: &str, content: &str) -> (String, String) {
     // Supports multiline front/back.
     //
@@ -113,7 +181,7 @@ async fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
 
-    let markdown = fs::read_to_string(&args.file)?;
+    let markdown = read_markdown_file(&args.file)?;
     let raw_deck = parser::parse_markdown(&markdown)?;
 
     println!("Deck: {}", raw_deck.name);

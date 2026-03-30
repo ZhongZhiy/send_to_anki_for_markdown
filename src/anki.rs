@@ -2,6 +2,26 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+fn escape_json_non_ascii(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        if ch.is_ascii() {
+            out.push(ch);
+            continue;
+        }
+        let code = ch as u32;
+        if code <= 0xFFFF {
+            out.push_str(&format!("\\u{:04x}", code));
+        } else {
+            let code = code - 0x1_0000;
+            let high = 0xD800 + ((code >> 10) as u16);
+            let low = 0xDC00 + ((code & 0x3FF) as u16);
+            out.push_str(&format!("\\u{:04x}\\u{:04x}", high, low));
+        }
+    }
+    out
+}
+
 /// A single Anki note payload compatible with Anki-Connect's `addNote(s)` APIs.
 #[derive(Serialize)]
 pub struct AnkiNote {
@@ -47,10 +67,8 @@ pub async fn add_notes(
     };
 
     if print_json || dry_run {
-        println!(
-            "Request JSON:\n{}",
-            serde_json::to_string_pretty(&request).unwrap()
-        );
+        let pretty = serde_json::to_string_pretty(&request)?;
+        println!("Request JSON:\n{}", escape_json_non_ascii(&pretty));
     }
 
     if dry_run {

@@ -129,60 +129,59 @@ fn normalize_callout_sugar(line: &str) -> Option<String> {
 }
 
 fn convert_inline_dollar_math(line: &str) -> String {
-    let bytes = line.as_bytes();
-    let mut out = String::new();
-    let mut i = 0;
+    let positions: Vec<(usize, char)> = line.char_indices().collect();
+    let mut out = String::with_capacity(line.len());
     let mut in_inline_code = false;
+    let mut pos = 0usize;
 
-    while i < bytes.len() {
-        let ch = bytes[i] as char;
+    while pos < positions.len() {
+        let (_, ch) = positions[pos];
         if ch == '`' {
             in_inline_code = !in_inline_code;
-            out.push(ch);
-            i += 1;
+            out.push('`');
+            pos += 1;
             continue;
         }
 
         if ch == '$' && !in_inline_code {
-            if i + 1 < bytes.len() && bytes[i + 1] == b'$' {
+            if pos + 1 < positions.len() && positions[pos + 1].1 == '$' {
                 out.push_str("$$");
-                i += 2;
+                pos += 2;
                 continue;
             }
 
-            let mut j = i + 1;
+            let start_byte = positions[pos].0 + 1;
+            let mut k = pos + 1;
             let mut found = None;
-            while j < bytes.len() {
-                if bytes[j] == b'`' {
+            while k < positions.len() {
+                let (_, ck) = positions[k];
+                if ck == '`' {
                     break;
                 }
-                if bytes[j] == b'$' {
-                    if j > 0 && bytes[j - 1] == b'\\' {
-                        j += 1;
-                        continue;
+                if ck == '$' {
+                    let escaped = k > 0 && positions[k - 1].1 == '\\';
+                    let is_double = k + 1 < positions.len() && positions[k + 1].1 == '$';
+                    if !escaped && !is_double {
+                        found = Some(k);
+                        break;
                     }
-                    if j + 1 < bytes.len() && bytes[j + 1] == b'$' {
-                        j += 1;
-                        continue;
-                    }
-                    found = Some(j);
-                    break;
                 }
-                j += 1;
+                k += 1;
             }
 
-            if let Some(end) = found {
-                let inner = &line[i + 1..end];
+            if let Some(end_pos) = found {
+                let end_byte = positions[end_pos].0;
+                let inner = &line[start_byte..end_byte];
                 out.push_str("\\\\(");
                 out.push_str(inner);
                 out.push_str("\\\\)");
-                i = end + 1;
+                pos = end_pos + 1;
                 continue;
             }
         }
 
         out.push(ch);
-        i += 1;
+        pos += 1;
     }
 
     out
@@ -314,7 +313,7 @@ fn convert_wikilinks_and_tags(markdown: &str) -> String {
                 if boundary {
                     let mut j = i + 1;
                     while j < chars.len()
-                        && (chars[j].is_ascii_alphanumeric() || "-_/.".contains(chars[j]))
+                        && (chars[j].is_alphanumeric() || "-_/.".contains(chars[j]))
                     {
                         j += 1;
                     }
@@ -436,6 +435,8 @@ pub fn render_markdown_to_html(markdown: &str) -> String {
 
     let css = r#"
 <style>
+.card, body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", Arial, sans-serif; }
+.card { line-height: 1.65; }
 table { width: 100%; margin: 0.6em 0 1em; border-collapse: separate; border-spacing: 0; border: 1px solid #d0d7de; border-radius: 10px; overflow: hidden; }
 th, td { padding: 8px 10px; border-bottom: 1px solid #d0d7de; border-right: 1px solid #d0d7de; vertical-align: top; }
 tr:last-child td { border-bottom: 0; }
@@ -446,7 +447,7 @@ code { background-color: #f6f8fa; color: #24292f; padding: 2px 4px; border-radiu
 .anki-code { background-color: #0d1117 !important; color: #c9d1d9 !important; border: 1px solid #30363d; border-radius: 10px; padding: 12px 14px; overflow-x: auto; line-height: 1.6; font-size: 14px; tab-size: 4; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
 .anki-code code { background-color: transparent; color: inherit; padding: 0; border-radius: 0; font-family: inherit; font-size: inherit; }
 .wikilink { color: #0969da; text-decoration: none; border-bottom: 1px dotted #9cbef5; }
-.tag { display: inline-block; background: #e9eef9; color: #334e96; border: 1px solid #c8d5f0; border-radius: 6px; padding: 0 6px; margin: 0 2px; font-size: 12px; }
+.tag { display: inline-block; background: #e9eef9; color: #334e96; border: 1px solid #c8d5f0; border-radius: 6px; padding: 0 6px; margin: 0 2px; font-size: 12px; font-family: inherit; }
 </style>
 "#;
 

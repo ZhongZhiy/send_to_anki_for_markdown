@@ -1,7 +1,6 @@
 mod anki;
 mod parser;
 mod render;
-
 use clap::Parser;
 use std::collections::HashMap;
 use std::fs;
@@ -195,37 +194,33 @@ async fn main() -> anyhow::Result<()> {
 
         let mut fields = HashMap::new();
         let model_name;
-
         if is_cloze {
             model_name = "Cloze".to_string();
-            // Support multiline cloze content:
-            // - Text: front (title + optional body)
-            // - Back Extra: remaining content (if any)
-            let split_token = "\n\nANKI_CLI_SPLIT\n\n";
-            let combined_md = format!("{}{}{}", front_md, split_token, back_md);
-            let combined_with_clozes = render::convert_highlights_to_clozes(&combined_md);
-            let (front_converted, back_converted) =
-                match combined_with_clozes.split_once(split_token.trim()) {
-                    Some((a, b)) => (a.trim().to_string(), b.trim().to_string()),
-                    None => (combined_with_clozes, String::new()),
-                };
 
-            let text_html = render::render_markdown_to_html(&front_converted);
-            let back_extra_html = if back_converted.is_empty() {
-                String::new()
+            // 【关键修改】：将标题 front_md 和下方的多行正文 back_md 完整拼接
+            let full_md = if back_md.trim().is_empty() {
+                front_md.clone()
             } else {
-                render::render_markdown_to_html(&back_converted)
+                format!("{}\n\n{}", front_md, back_md)
             };
+
+            // 1. 进行高亮转填空转换（内部已过滤代码块）
+            let combined_with_clozes = render::convert_highlights_to_clozes(&full_md);
+
+            // 2. 渲染包含多行与填空标记的 HTML
+            let text_html = render::render_markdown_to_html(&combined_with_clozes);
+
+            // 3. 将完整多行 HTML 传入 Anki 的 Text 字段（保证多行和所有填空都能生效）
             fields.insert("Text".to_string(), text_html);
-            fields.insert("Back Extra".to_string(), back_extra_html);
+            fields.insert("Back Extra".to_string(), String::new());
         } else {
+            // 普通问答题分支保持不动
             model_name = "Basic".to_string();
             let front_html = render::render_markdown_to_html(&front_md);
             let back_html = render::render_markdown_to_html(&back_md);
             fields.insert("Front".to_string(), front_html);
             fields.insert("Back".to_string(), back_html);
         }
-
         anki_notes.push(anki::AnkiNote {
             deck_name: raw_deck.name.clone(),
             model_name,

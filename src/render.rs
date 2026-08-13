@@ -1,18 +1,24 @@
 use lazy_static::lazy_static;
 use pulldown_cmark::{html, CodeBlockKind, Event, Options, Parser, Tag};
-use regex::Regex;
+use regex::{Captures, Regex};
 use syntect::highlighting::ThemeSet;
 use syntect::html::highlighted_html_for_string;
 use syntect::parsing::SyntaxSet;
 
 lazy_static! {
-    static ref RE_CLOZE_EXISTING: Regex = Regex::new(r"\{\{c(\d+)::.*?\}\}").unwrap();
+    // static ref RE_CLOZE_EXISTING: Regex = Regex::new(r"\{\{c(\d+)::.*?\}\}").unwrap();
     static ref RE_HIGHLIGHT: Regex = Regex::new(r"==([^=]+)==").unwrap();
     static ref RE_PRE_OPEN: Regex = Regex::new(r"(?s)\A<pre[^>]*>").unwrap();
     static ref RE_STYLE_ATTR: Regex = Regex::new(r#"\sstyle="[^"]*""#).unwrap();
     static ref RE_CLASS_ATTR: Regex = Regex::new(r#"\sclass="([^"]*)""#).unwrap();
     static ref RE_WIKI_LINK: Regex = Regex::new(r"\[\[([^\[\]]+?)\]\]").unwrap();
     static ref RE_HASH_TAG: Regex = Regex::new(r"(^|\s)#([A-Za-z0-9_\-\/\.]+)").unwrap();
+    // 匹配多行代码块 ```...``` 以及单行/行内代码 `...`
+    static ref RE_CODE_BLOCK: Regex = Regex::new(r"(?s)```.*?```|`[^`\n]+`").unwrap();
+    // 匹配填空高亮语法 ==内容==
+    // static ref RE_HIGHLIGHT: Regex = Regex::new(r"==([^=]+)==").unwrap();
+    // 匹配已有的填空标记 {{c1::...}}
+    static ref RE_CLOZE_EXISTING: Regex = Regex::new(r"\{\{c(\d+)::").unwrap();
 }
 
 /// Convert `==text==` to `{{cN::text}}`.
@@ -20,8 +26,19 @@ lazy_static! {
 /// If the input already contains `{{c1::...}}`-style clozes, numbering continues from
 /// the largest existing index to avoid collisions.
 pub fn convert_highlights_to_clozes(text: &str) -> String {
+    let mut protected_blocks = Vec::new();
+
+    // Step 1: 提取所有代码块，暂时替换为占位符
+    let text_with_placeholders = RE_CODE_BLOCK.replace_all(text, |caps: &Captures| {
+        let code_str = caps.get(0).unwrap().as_str().to_string();
+        let placeholder = format!("___PROTECTED_CODE_BLOCK_{}___", protected_blocks.len());
+        protected_blocks.push(code_str);
+        placeholder
+    });
+
+    // Step 2: 获取已有的最大填空序号
     let mut max_idx = 0;
-    for cap in RE_CLOZE_EXISTING.captures_iter(text) {
+    for cap in RE_CLOZE_EXISTING.captures_iter(&text_with_placeholders) {
         if let Ok(idx) = cap[1].parse::<usize>() {
             if idx > max_idx {
                 max_idx = idx;
@@ -33,17 +50,24 @@ pub fn convert_highlights_to_clozes(text: &str) -> String {
     let mut result = String::new();
     let mut last_match = 0;
 
-    for cap in RE_HIGHLIGHT.captures_iter(text) {
+    // Step 3: 只在非代码块区域将 ==内容== 替换为 {{c1::内容}}
+    for cap in RE_HIGHLIGHT.captures_iter(&text_with_placeholders) {
         let m = cap.get(0).unwrap();
-        result.push_str(&text[last_match..m.start()]);
+        result.push_str(&text_with_placeholders[last_match..m.start()]);
         result.push_str(&format!("{{{{c{}::{}}}}}", counter, &cap[1]));
         counter += 1;
         last_match = m.end();
     }
-    result.push_str(&text[last_match..]);
+    result.push_str(&text_with_placeholders[last_match..]);
+
+    // Step 4: 将占位符还原为原本的代码块
+    for (i, code_block) in protected_blocks.iter().enumerate() {
+        let placeholder = format!("___PROTECTED_CODE_BLOCK_{}___", i);
+        result = result.replace(&placeholder, code_block);
+    }
+
     result
 }
-
 fn normalize_syntect_pre(highlighted_html: &str) -> String {
     if let Some(m) = RE_PRE_OPEN.find(highlighted_html) {
         let open_tag = &highlighted_html[m.start()..m.end()];
@@ -455,5 +479,7 @@ code { background-color: #f6f8fa; color: #24292f; padding: 2px 4px; border-radiu
 }
 
 pub fn has_cloze(text: &str) -> bool {
-    RE_CLOZE_EXISTING.is_match(text) || RE_HIGHLIGHT.is_match(text)
+    // 先移除所有代码块，再检查剩余文本中是否有填空语法
+    let text_without_code = RE_CODE_BLOCK.replace_all(text, "");
+    RE_CLOZE_EXISTING.is_match(&text_without_code) || RE_HIGHLIGHT.is_match(&text_without_code)
 }

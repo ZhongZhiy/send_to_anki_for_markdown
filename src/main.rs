@@ -215,7 +215,7 @@ async fn main() -> anyhow::Result<()> {
             fields.insert("Back Extra".to_string(), String::new());
         } else {
             // 普通问答题分支保持不动
-            model_name = "Basic".to_string();
+            model_name = "rustyQA".to_string();
             let front_html = render::render_markdown_to_html(&front_md);
             let back_html = render::render_markdown_to_html(&back_md);
             fields.insert("Front".to_string(), front_html);

@@ -405,8 +405,9 @@ pub fn render_markdown_to_html(markdown: &str) -> String {
     let ts = ThemeSet::load_defaults();
     let theme = ts
         .themes
-        .get("base16-ocean.dark")
-        .or_else(|| ts.themes.get("InspiredGitHub"))
+        .get("Solarized (dark)")
+        // .get("InspiredGitHub")
+        .or_else(|| ts.themes.get("base16-ocean.dark"))
         .unwrap();
 
     let mut events = Vec::new();
@@ -457,25 +458,7 @@ pub fn render_markdown_to_html(markdown: &str) -> String {
     let mut html_output = String::new();
     html::push_html(&mut html_output, events.into_iter());
 
-    let css = r#"
-<style>
-.card, body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", Arial, sans-serif; }
-.card { line-height: 1.65; }
-table { width: 100%; margin: 0.6em 0 1em; border-collapse: separate; border-spacing: 0; border: 1px solid #d0d7de; border-radius: 10px; overflow: hidden; }
-th, td { padding: 8px 10px; border-bottom: 1px solid #d0d7de; border-right: 1px solid #d0d7de; vertical-align: top; }
-tr:last-child td { border-bottom: 0; }
-th:last-child, td:last-child { border-right: 0; }
-th { font-weight: 600; }
-blockquote { border-left: 4px solid #d0d7de; margin: 0.6em 0; padding: 0.2em 0.8em; color: #57606a; border-radius: 8px; }
-code { background-color: #f6f8fa; color: #24292f; padding: 2px 4px; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-.anki-code { background-color: #0d1117 !important; color: #c9d1d9 !important; border: 1px solid #30363d; border-radius: 10px; padding: 12px 14px; overflow-x: auto; line-height: 1.6; font-size: 14px; tab-size: 4; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-.anki-code code { background-color: transparent; color: inherit; padding: 0; border-radius: 0; font-family: inherit; font-size: inherit; }
-.wikilink { color: #0969da; text-decoration: none; border-bottom: 1px dotted #9cbef5; }
-.tag { display: inline-block; background: #e9eef9; color: #334e96; border: 1px solid #c8d5f0; border-radius: 6px; padding: 0 6px; margin: 0 2px; font-size: 12px; font-family: inherit; }
-</style>
-"#;
-
-    format!("{}{}", css, html_output)
+    html_output
 }
 
 pub fn has_cloze(text: &str) -> bool {

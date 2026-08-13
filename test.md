@@ -1,22 +1,30 @@
 # Default
 
-## zheshi 
+## ssfirst
 
-tiank ti ==fdsf== and ==secode==
-
+jj
 --- 
-
-nxtsfsjj
-
-## [wenda ]
-
-wenda 
-
---- 
-
-jfssfj
 ```cpp 
-if(a == b) {return 1}
+#include<iostream>
+int main(){
+std::cout << "Hello world";
+}
 ```
+
+## fsddecond
+
+--- 
+```py 
+def g :
+  print("hello world");
+```
+```
+```
+
+## thidrd
+```rust 
+fn main(){
+  print("yes == yes")
+}
 ```
 

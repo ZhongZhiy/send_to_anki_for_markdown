@@ -116,7 +116,7 @@ fn split_front_back(title: &str, content: &str) -> (String, String) {
             in_fence = !in_fence;
         }
 
-        if !in_fence && trimmed == "---" && !found_split {
+        if !in_fence && trimmed == "___" && !found_split {
             found_split = true;
             continue;
         }

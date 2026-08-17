@@ -1,34 +1,31 @@
-use lazy_static::lazy_static;
-use pulldown_cmark::{html, CodeBlockKind, Event, Options, Parser, Tag};
 use regex::{Captures, Regex};
-use syntect::highlighting::ThemeSet;
-use syntect::html::highlighted_html_for_string;
-use syntect::parsing::SyntaxSet;
+use lazy_static::lazy_static;
+use pulldown_cmark::{html, Options, Parser};
 
 lazy_static! {
-    // static ref RE_CLOZE_EXISTING: Regex = Regex::new(r"\{\{c(\d+)::.*?\}\}").unwrap();
-    static ref RE_HIGHLIGHT: Regex = Regex::new(r"==([^=]+)==").unwrap();
-    static ref RE_PRE_OPEN: Regex = Regex::new(r"(?s)\A<pre[^>]*>").unwrap();
-    static ref RE_STYLE_ATTR: Regex = Regex::new(r#"\sstyle="[^"]*""#).unwrap();
-    static ref RE_CLASS_ATTR: Regex = Regex::new(r#"\sclass="([^"]*)""#).unwrap();
-    static ref RE_WIKI_LINK: Regex = Regex::new(r"\[\[([^\[\]]+?)\]\]").unwrap();
-    static ref RE_HASH_TAG: Regex = Regex::new(r"(^|\s)#([A-Za-z0-9_\-\/\.]+)").unwrap();
-    // 匹配多行代码块 ```...``` 以及单行/行内代码 `...`
+    // 匹配代码块 ```...``` 和行内代码 `...`
     static ref RE_CODE_BLOCK: Regex = Regex::new(r"(?s)```.*?```|`[^`\n]+`").unwrap();
-    // 匹配填空高亮语法 ==内容==
-    // static ref RE_HIGHLIGHT: Regex = Regex::new(r"==([^=]+)==").unwrap();
-    // 匹配已有的填空标记 {{c1::...}}
+    // 匹配填空语法 ==内容==
+    static ref RE_HIGHLIGHT: Regex = Regex::new(r"==([^=]+)==").unwrap();
+    // 匹配已有填空标记 {{c1::...}}
     static ref RE_CLOZE_EXISTING: Regex = Regex::new(r"\{\{c(\d+)::").unwrap();
+    // 匹配 GitHub Callouts
+    static ref RE_CALLOUT: Regex = Regex::new(
+        r"(?s)<blockquote>\s*<p>\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*<br\s*/?>?\s*(.*?)</p>\s*</blockquote>"
+    ).unwrap();
 }
 
-/// Convert `==text==` to `{{cN::text}}`.
-///
-/// If the input already contains `{{c1::...}}`-style clozes, numbering continues from
-/// the largest existing index to avoid collisions.
+/// 检查是否包含填空（跳过代码块）
+pub fn has_cloze(text: &str) -> bool {
+    let text_without_code = RE_CODE_BLOCK.replace_all(text, "");
+    RE_CLOZE_EXISTING.is_match(&text_without_code) || RE_HIGHLIGHT.is_match(&text_without_code)
+}
+
+/// 将 ==内容== 替换为 {{c1::内容}}，自动保护代码块中的 == 运算符
 pub fn convert_highlights_to_clozes(text: &str) -> String {
     let mut protected_blocks = Vec::new();
 
-    // Step 1: 提取所有代码块，暂时替换为占位符
+    // 1. 保护代码块
     let text_with_placeholders = RE_CODE_BLOCK.replace_all(text, |caps: &Captures| {
         let code_str = caps.get(0).unwrap().as_str().to_string();
         let placeholder = format!("___PROTECTED_CODE_BLOCK_{}___", protected_blocks.len());
@@ -36,7 +33,7 @@ pub fn convert_highlights_to_clozes(text: &str) -> String {
         placeholder
     });
 
-    // Step 2: 获取已有的最大填空序号
+    // 2. 计算现有最大填空序号
     let mut max_idx = 0;
     for cap in RE_CLOZE_EXISTING.captures_iter(&text_with_placeholders) {
         if let Ok(idx) = cap[1].parse::<usize>() {
@@ -50,7 +47,7 @@ pub fn convert_highlights_to_clozes(text: &str) -> String {
     let mut result = String::new();
     let mut last_match = 0;
 
-    // Step 3: 只在非代码块区域将 ==内容== 替换为 {{c1::内容}}
+    // 3. 转换非代码区域的 ==内容==
     for cap in RE_HIGHLIGHT.captures_iter(&text_with_placeholders) {
         let m = cap.get(0).unwrap();
         result.push_str(&text_with_placeholders[last_match..m.start()]);
@@ -60,7 +57,7 @@ pub fn convert_highlights_to_clozes(text: &str) -> String {
     }
     result.push_str(&text_with_placeholders[last_match..]);
 
-    // Step 4: 将占位符还原为原本的代码块
+    // 4. 还原代码块
     for (i, code_block) in protected_blocks.iter().enumerate() {
         let placeholder = format!("___PROTECTED_CODE_BLOCK_{}___", i);
         result = result.replace(&placeholder, code_block);
@@ -68,401 +65,31 @@ pub fn convert_highlights_to_clozes(text: &str) -> String {
 
     result
 }
-fn normalize_syntect_pre(highlighted_html: &str) -> String {
-    if let Some(m) = RE_PRE_OPEN.find(highlighted_html) {
-        let open_tag = &highlighted_html[m.start()..m.end()];
-        let mut open_tag = RE_STYLE_ATTR.replace_all(open_tag, "").into_owned();
-        if let Some(caps) = RE_CLASS_ATTR.captures(&open_tag) {
-            let existing = caps.get(1).unwrap().as_str();
-            if !existing.split_whitespace().any(|c| c == "anki-code") {
-                open_tag = RE_CLASS_ATTR
-                    .replace(&open_tag, format!(" class=\"{} anki-code\"", existing))
-                    .into_owned();
-            }
-        } else {
-            open_tag = open_tag.replacen("<pre", "<pre class=\"anki-code\"", 1);
-        }
-        return format!("{}{}", open_tag, &highlighted_html[m.end()..]);
-    }
-    highlighted_html.to_string()
+
+/// 支持 GitHub 风格的 Callout 提示框
+pub fn convert_callouts(html: &str) -> String {
+    RE_CALLOUT.replace_all(html, |caps: &Captures| {
+        let callout_type = caps[1].to_lowercase();
+        let title = &caps[1];
+        let content = caps[2].trim();
+
+        format!(
+            r#"<div class="callout callout-{}"><div class="callout-title">{}</div><div class="callout-body">{}</div></div>"#,
+            callout_type, title, content
+        )
+    }).into_owned()
 }
 
-fn is_fence_line(line: &str) -> bool {
-    let trimmed = line.trim_start();
-    trimmed.starts_with("```") || trimmed.starts_with("~~~")
-}
-
-fn normalize_task_list_sugar(line: &str) -> Option<String> {
-    let trimmed = line.trim_start();
-    if let Some(stripped) = trimmed.strip_prefix("- [] ") {
-        let prefix_len = line.len() - trimmed.len();
-        let mut out = String::new();
-        out.push_str(&line[..prefix_len]);
-        out.push_str("- [ ] ");
-        out.push_str(stripped);
-        return Some(out);
-    }
-    if let Some(stripped) = trimmed.strip_prefix("* [] ") {
-        let prefix_len = line.len() - trimmed.len();
-        let mut out = String::new();
-        out.push_str(&line[..prefix_len]);
-        out.push_str("* [ ] ");
-        out.push_str(stripped);
-        return Some(out);
-    }
-    None
-}
-
-fn normalize_callout_sugar(line: &str) -> Option<String> {
-    let trimmed = line.trim_start();
-    let lower = trimmed.to_ascii_lowercase();
-    let patterns = [
-        ("note", "Note"),
-        ("warning", "Warning"),
-        ("tip", "Tip"),
-        ("info", "Info"),
-        ("abstract", "Abstract"),
-        ("quote", "Quote"),
-        ("example", "Example"),
-        ("success", "Success"),
-        ("failure", "Failure"),
-        ("bug", "Bug"),
-        ("important", "Important"),
-    ];
-    for (key, label) in patterns {
-        let p1 = format!(">[!{}]", key);
-        let p2 = format!("> [!{}]", key);
-        if lower.starts_with(&p1) || lower.starts_with(&p2) {
-            let after = if let Some(idx) = trimmed.find(']') {
-                trimmed[idx + 1..].trim_start()
-            } else {
-                ""
-            };
-            let mut out = String::new();
-            out.push_str("> **");
-            out.push_str(label);
-            out.push_str(":**");
-            if !after.is_empty() {
-                out.push(' ');
-                out.push_str(after);
-            }
-            return Some(out);
-        }
-    }
-    None
-}
-
-fn convert_inline_dollar_math(line: &str) -> String {
-    let positions: Vec<(usize, char)> = line.char_indices().collect();
-    let mut out = String::with_capacity(line.len());
-    let mut in_inline_code = false;
-    let mut pos = 0usize;
-
-    while pos < positions.len() {
-        let (_, ch) = positions[pos];
-        if ch == '`' {
-            in_inline_code = !in_inline_code;
-            out.push('`');
-            pos += 1;
-            continue;
-        }
-
-        if ch == '$' && !in_inline_code {
-            if pos + 1 < positions.len() && positions[pos + 1].1 == '$' {
-                out.push_str("$$");
-                pos += 2;
-                continue;
-            }
-
-            let start_byte = positions[pos].0 + 1;
-            let mut k = pos + 1;
-            let mut found = None;
-            while k < positions.len() {
-                let (_, ck) = positions[k];
-                if ck == '`' {
-                    break;
-                }
-                if ck == '$' {
-                    let escaped = k > 0 && positions[k - 1].1 == '\\';
-                    let is_double = k + 1 < positions.len() && positions[k + 1].1 == '$';
-                    if !escaped && !is_double {
-                        found = Some(k);
-                        break;
-                    }
-                }
-                k += 1;
-            }
-
-            if let Some(end_pos) = found {
-                let end_byte = positions[end_pos].0;
-                let inner = &line[start_byte..end_byte];
-                out.push_str("\\\\(");
-                out.push_str(inner);
-                out.push_str("\\\\)");
-                pos = end_pos + 1;
-                continue;
-            }
-        }
-
-        out.push(ch);
-        pos += 1;
-    }
-
-    out
-}
-
-fn convert_dollar_math_to_anki_mathjax(markdown: &str) -> String {
-    let mut out = String::new();
-    let mut in_fence = false;
-    let mut in_display_math = false;
-    let mut display_lines: Vec<String> = Vec::new();
-
-    for line in markdown.lines() {
-        if is_fence_line(line) {
-            in_fence = !in_fence;
-            out.push_str(line);
-            out.push('\n');
-            continue;
-        }
-
-        if in_fence {
-            out.push_str(line);
-            out.push('\n');
-            continue;
-        }
-
-        let trimmed = line.trim();
-        if in_display_math {
-            if trimmed.starts_with("$$") {
-                in_display_math = false;
-                let expr = display_lines.join("\n");
-                out.push_str("\\\\[\n");
-                out.push_str(expr.trim());
-                out.push_str("\n\\\\]\n");
-                display_lines.clear();
-                continue;
-            }
-            display_lines.push(line.to_string());
-            continue;
-        }
-
-        if trimmed == "$$" {
-            in_display_math = true;
-            continue;
-        }
-
-        if trimmed.starts_with("$$") && trimmed.ends_with("$$") && trimmed.len() > 4 {
-            let inner = trimmed
-                .trim_start_matches("$$")
-                .trim_end_matches("$$")
-                .trim();
-            out.push_str("\\\\[");
-            out.push_str(inner);
-            out.push_str("\\\\]\n");
-            continue;
-        }
-
-        out.push_str(&convert_inline_dollar_math(line));
-        out.push('\n');
-    }
-
-    if in_display_math {
-        out.push_str("$$\n");
-        for l in display_lines {
-            out.push_str(&l);
-            out.push('\n');
-        }
-    }
-
-    out
-}
-
-fn convert_wikilinks_and_tags(markdown: &str) -> String {
-    let mut out = String::new();
-    let mut in_fence = false;
-    for line in markdown.lines() {
-        if is_fence_line(line) {
-            in_fence = !in_fence;
-            out.push_str(line);
-            out.push('\n');
-            continue;
-        }
-        if in_fence {
-            out.push_str(line);
-            out.push('\n');
-            continue;
-        }
-
-        // Avoid inline code while converting.
-        let mut converted = String::new();
-        let mut in_inline_code = false;
-        let chars: Vec<char> = line.chars().collect();
-        let mut i = 0;
-        while i < chars.len() {
-            let ch = chars[i];
-            if ch == '`' {
-                in_inline_code = !in_inline_code;
-                converted.push(ch);
-                i += 1;
-                continue;
-            }
-            if !in_inline_code && ch == '[' && i + 1 < chars.len() && chars[i + 1] == '[' {
-                // Wiki link
-                let start = i + 2;
-                let mut j = start;
-                let mut found = None;
-                while j + 1 < chars.len() {
-                    if chars[j] == ']' && chars[j + 1] == ']' {
-                        found = Some(j);
-                        break;
-                    }
-                    j += 1;
-                }
-                if let Some(end) = found {
-                    let inner: String = chars[start..end].iter().collect();
-                    let display = if let Some(pos) = inner.find('|') {
-                        inner[pos + 1..].trim().to_string()
-                    } else {
-                        inner.trim().to_string()
-                    };
-                    converted.push_str(&format!("<span class=\"wikilink\">{}</span>", display));
-                    i = end + 2;
-                    continue;
-                }
-            }
-            // Tags: boundary + #word
-            if !in_inline_code && ch == '#' {
-                // Check boundary
-                let boundary = i == 0 || chars[i - 1].is_whitespace();
-                if boundary {
-                    let mut j = i + 1;
-                    while j < chars.len()
-                        && (chars[j].is_alphanumeric() || "-_/.".contains(chars[j]))
-                    {
-                        j += 1;
-                    }
-                    if j > i + 1 {
-                        let tag: String = chars[i..j].iter().collect();
-                        converted.push_str(&format!("<span class=\"tag\">{}</span>", tag));
-                        i = j;
-                        continue;
-                    }
-                }
-            }
-            converted.push(ch);
-            i += 1;
-        }
-        out.push_str(&converted);
-        out.push('\n');
-    }
-    out
-}
-
-/// Normalize a few common Markdown "sugar" extensions, and convert `$...$` / `$$...$$`
-/// math delimiters into Anki's MathJax-friendly `\\( ... \\)` and `\\[ ... \\]` form.
-pub fn preprocess_markdown(markdown: &str) -> String {
-    let mut out = String::new();
-
-    for line in markdown.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with(":::") || trimmed.starts_with("[^") {
-            eprintln!("Warning: Unsupported extended syntax skipped: {}", line);
-            continue;
-        }
-
-        if let Some(normalized) = normalize_callout_sugar(line) {
-            eprintln!("Warning: Callout syntax normalized: {}", line);
-            out.push_str(&normalized);
-            out.push('\n');
-            continue;
-        }
-
-        if let Some(normalized) = normalize_task_list_sugar(line) {
-            out.push_str(&normalized);
-            out.push('\n');
-            continue;
-        }
-
-        out.push_str(line);
-        out.push('\n');
-    }
-
-    let out = convert_dollar_math_to_anki_mathjax(&out);
-    convert_wikilinks_and_tags(&out)
-}
-
+/// 将 Markdown 转换为 HTML
 pub fn render_markdown_to_html(markdown: &str) -> String {
-    let markdown = preprocess_markdown(markdown);
-
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TASKLISTS);
 
-    let parser = Parser::new_ext(&markdown, options);
-
-    let ss = SyntaxSet::load_defaults_newlines();
-    let ts = ThemeSet::load_defaults();
-    let theme = ts
-        .themes
-        .get("Solarized (dark)")
-        // .get("InspiredGitHub")
-        .or_else(|| ts.themes.get("base16-ocean.dark"))
-        .unwrap();
-
-    let mut events = Vec::new();
-    let mut in_code_block = false;
-    let mut code_language = String::new();
-    let mut code_content = String::new();
-
-    for event in parser {
-        match event {
-            Event::Start(Tag::CodeBlock(ref kind)) => {
-                in_code_block = true;
-                if let CodeBlockKind::Fenced(ref lang) = kind {
-                    code_language = lang.to_string();
-                } else {
-                    code_language = String::new();
-                }
-            }
-            Event::End(Tag::CodeBlock(_)) => {
-                in_code_block = false;
-                let syntax = ss
-                    .find_syntax_by_token(&code_language)
-                    .unwrap_or_else(|| ss.find_syntax_plain_text());
-
-                let highlighted = highlighted_html_for_string(&code_content, &ss, syntax, theme)
-                    .map(|s| normalize_syntect_pre(&s))
-                    .unwrap_or_else(|_| {
-                        format!(
-                            "<pre class=\"anki-code\"><code>{}</code></pre>",
-                            code_content
-                        )
-                    });
-
-                events.push(Event::Html(highlighted.into()));
-                code_content.clear();
-                code_language.clear();
-            }
-            Event::Text(ref text) if in_code_block => {
-                code_content.push_str(text);
-            }
-            _ => {
-                if !in_code_block {
-                    events.push(event);
-                }
-            }
-        }
-    }
-
+    let parser = Parser::new_ext(markdown, options);
     let mut html_output = String::new();
-    html::push_html(&mut html_output, events.into_iter());
+    html::push_html(&mut html_output, parser);
 
-    html_output
-}
-
-pub fn has_cloze(text: &str) -> bool {
-    // 先移除所有代码块，再检查剩余文本中是否有填空语法
-    let text_without_code = RE_CODE_BLOCK.replace_all(text, "");
-    RE_CLOZE_EXISTING.is_match(&text_without_code) || RE_HIGHLIGHT.is_match(&text_without_code)
+    convert_callouts(&html_output)
 }

@@ -1,6 +1,9 @@
 # Default
 
-## sssfirst
+## jksassfirst
+Tags:
+#dfs 
+#dijstra
 
 jjjj
 ___
@@ -22,7 +25,8 @@ def g :
 ```
 ```
 
-## tssshidrd
+## atssshidrd
+#SCC #bfs
 
 ___
 ```rust 
